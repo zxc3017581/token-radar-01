@@ -8,7 +8,7 @@
   var DATA = window.RADAR;
   if (!DATA) return;
   var app = document.getElementById('board');
-  var state = { q: '', category: 'all', chain: 'all', tab: 'pre-token', sort: 'implied', dir: -1, selected: null };
+  var state = { q: '', category: 'all', chain: 'all', watchlistOnly: false, tab: 'pre-token', sort: 'implied', dir: -1, selected: null };
   // The sandbox: a scale on the comparable multiple, an override for the growth weight, and the
   // chain factor on or off. All three at their defaults mean the board as scored; any change
   // re-ranks the table live and says so, without touching board.json.
@@ -180,7 +180,10 @@
 
   function rows() {
     var q = state.q.trim().toLowerCase();
+    var watch = {};
+    (DATA.watchlist_slugs || []).forEach(function (s) { watch[s] = true; });
     return DATA.rows.filter(function (r) {
+      if (state.watchlistOnly && !watch[r.slug]) return false;
       if (state.category !== 'all' && r.category !== state.category) return false;
       if (state.chain !== 'all' && (r.chains || []).indexOf(state.chain) < 0) return false;
       if (!q) return true;
@@ -248,6 +251,7 @@
     chainSelect.addEventListener('change', function () { state.chain = chainSelect.value; writeHash(); render(); });
     var pre = el('button', { type: 'button', 'aria-pressed': state.tab === 'pre-token' ? 'true' : 'false', text: 'Pre-token', onclick: function () { state.tab = 'pre-token'; render(); } });
     var live = el('button', { type: 'button', 'aria-pressed': state.tab === 'live' ? 'true' : 'false', text: 'Live token', onclick: function () { state.tab = 'live'; render(); } });
+    var watchToggle = el('button', { type: 'button', 'aria-pressed': state.watchlistOnly ? 'true' : 'false', text: state.watchlistOnly ? 'Watchlist only' : 'Watchlist + early', onclick: function () { state.watchlistOnly = !state.watchlistOnly; render(); } });
     var countText = state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols';
     if (state.tab === 'pre-token' && sandboxActive()) countText += '  ·  sandbox values';
     return el('div', { class: 'controls' },
@@ -255,6 +259,7 @@
       el('div', { class: 'field' }, el('label', { for: 'category', text: 'Category' }), select),
       el('div', { class: 'field' }, el('label', { for: 'chain', text: 'Chain' }), chainSelect),
       el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
+      el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Board scope' }), el('div', { class: 'tabs' }, watchToggle)),
       el('span', { class: 'count', text: countText })
     );
   }
@@ -297,6 +302,7 @@
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
         el('td', { class: 'num ' + growthClass, text: growth }),
         el('td', { class: 'num', text: fmtAge(r.age_days) }),
+        el('td', { class: 'num', text: String(r.comparable_multiple) }),
         el('td', null, el('div', { class: 'implied' },
           el('div', { class: 'bar', 'aria-hidden': 'true' }, el('i', { style: 'width:' + Math.max(3, Math.round((effImplied(r) / max) * 100)) + '%' })),
           el('span', { class: 'num', text: fmtUsd(effImplied(r)) })
@@ -315,6 +321,7 @@
             sortHeader('tvl', 'TVL'),
             sortHeader('growth', '7d'),
             sortHeader('age', 'Age'),
+            el('th', { scope: 'col', text: 'Comparable' }),
             sortHeader('implied', 'Implied value'),
             el('th', { scope: 'col', text: 'Token' })
           )),
@@ -333,6 +340,7 @@
         el('td', { class: 'num', text: fmtUsd(r.tvl_usd) }),
         el('td', { class: 'num ' + (r.change_7d !== null && r.change_7d >= 0 ? 'pos' : 'neg'), text: fmtPct(r.change_7d) }),
         el('td', { class: 'num', text: fmtUsd(r.mcap_usd) }),
+        el('td', { class: 'num', text: r.ratio === null || r.ratio === undefined ? 'n/a' : String(r.ratio) }),
         el('td', null, el('span', { class: 'status', text: 'already trades' }))
       ));
     });
@@ -340,7 +348,50 @@
       el('div', { class: 'table-wrap' },
         el('table', null,
           el('caption', { class: 'sub', text: 'Token live: these protocols already trade, so their market cap is a fact, not a model. They are set aside from the pre-token ranking.' }),
-          el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Status' }), el('th', { scope: 'col', text: 'Protocol' }), el('th', { scope: 'col', text: 'TVL' }), el('th', { scope: 'col', text: '7d' }), el('th', { scope: 'col', text: 'Market cap' }), el('th', { scope: 'col', text: 'Token' }))),
+          el('thead', null, el('tr', null, el('th', { scope: 'col', text: 'Status' }), el('th', { scope: 'col', text: 'Protocol' }), el('th', { scope: 'col', text: 'TVL' }), el('th', { scope: 'col', text: '7d' }), el('th', { scope: 'col', text: 'Market cap' }), el('th', { scope: 'col', text: 'Mcap / TVL' }), el('th', { scope: 'col', text: 'Token' }))),
+          tbody
+        )
+      )
+    );
+  }
+
+  // The board grouped by category, richest first: which categories hold the implied value, what
+  // multiple priced each one, and its strongest protocol. A category priced from its own live
+  // protocols shows its count; a fallback category shows the global median instead.
+  function categoryPanel() {
+    var cats = DATA.categories || [];
+    if (cats.length === 0) return null;
+    var tbody = el('tbody');
+    cats.forEach(function (c) {
+      var comp = c.comparable_n > 0 ? String(c.comparable_multiple) + ' (' + c.comparable_n + ' live)' : String(c.comparable_multiple) + ' (global)';
+      tbody.appendChild(el('tr', {
+        tabindex: '0',
+        onclick: function () { state.category = c.category; writeHash(); render(); },
+        onkeydown: function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); state.category = c.category; writeHash(); render(); } }
+      },
+        el('td', null, el('b', { text: c.category })),
+        el('td', { class: 'num', text: String(c.rows) }),
+        el('td', { class: 'num', text: String(c.watchlist_rows) }),
+        el('td', { class: 'num', text: comp }),
+        el('td', { class: 'num', text: fmtUsd(c.total_implied_usd) }),
+        el('td', null, el('span', { class: 'sub', text: c.top_name }))
+      ));
+    });
+    return el('section', { class: 'panel cats' },
+      el('div', { class: 'cats-head' },
+        el('h2', { text: 'Implied value by category' }),
+        el('p', { class: 'sub', text: 'Select a category to filter the board to it. The multiple is the category’s own median market-cap / TVL among its live protocols, or the global median where the category is too thin to price itself.' })
+      ),
+      el('div', { class: 'table-wrap' },
+        el('table', null,
+          el('thead', null, el('tr', null,
+            el('th', { scope: 'col', text: 'Category' }),
+            el('th', { scope: 'col', text: 'Protocols' }),
+            el('th', { scope: 'col', text: 'On watchlist' }),
+            el('th', { scope: 'col', text: 'Comparable' }),
+            el('th', { scope: 'col', text: 'Total implied value' }),
+            el('th', { scope: 'col', text: 'Strongest protocol' })
+          )),
           tbody
         )
       )
@@ -354,7 +405,8 @@
       el('h2', { text: 'How implied value is computed' }),
       el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. No protocol name is special-cased, and no row is hand-picked.' }),
       el('div', { class: 'formula' }, formula),
-      el('p', { class: 'sub', text: 'The comparable is the category’s own multiple: the median market-cap / TVL ratio of the live-token protocols in that category in this same snapshot. A pre-token DEX is worth what live DEXs trade at per dollar of TVL; a pre-token lender is worth what live lenders trade at. Categories with fewer than three live protocols fall back to the global median, ' + DATA.global_comparable + '. The multiple is clamped to [' + m.comparable_floor + ', ' + m.comparable_cap + '] and rounded to four decimals when it is scored. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. The early radar is every pre-token protocol below the watchlist floor, and the live-token protocols are set aside with their market caps shown.' })
+      el('p', { class: 'sub', text: 'The comparable is the category’s own multiple: the median market-cap / TVL ratio of the live-token protocols in that category in this same snapshot. A pre-token DEX is worth what live DEXs trade at per dollar of TVL; a pre-token lender is worth what live lenders trade at. Categories with fewer than three live protocols fall back to the global median, ' + DATA.global_comparable + '. The multiple is clamped to [' + m.comparable_floor + ', ' + m.comparable_cap + '] and rounded to four decimals when it is scored. Age is the time since the protocol was first listed, the best record of how long it has run with no token; an unlisted age uses ' + m.unknown_age_days + ' days. The early radar is every pre-token protocol below the watchlist floor, and the live-token protocols are set aside with their market caps shown.' }),
+      el('p', { class: 'sub', text: 'Across the ' + DATA.categories.length + ' categories on the board, ' + DATA.comparable_stats.categories_priced + ' price themselves from their own live protocols and ' + DATA.comparable_stats.categories_fallback + ' fall back to the global median. The multiples run from ' + DATA.comparable_stats.min_multiple + ' to ' + DATA.comparable_stats.max_multiple + ', median ' + DATA.comparable_stats.median_multiple + '.' })
     );
     // The sandbox: three controls that re-score the board in the page, under different assumptions.
     var scaleOut = el('output', { id: 'sandbox-scale-out', text: 'x' + sandbox.scale.toFixed(2) });
@@ -417,6 +469,7 @@
         el('div', null, el('span', { text: 'Implied value' }), el('b', { class: 'num', text: fmtUsd(row.implied_value_usd) }))
       ),
       el('p', { class: 'sub', text: compNote + '. ' }),
+      el('p', { class: 'explain', text: row.explanation || '' }),
       el('p', { class: 'sub', text: 'Model ' + DATA.model_version + ': the same function scores every protocol. The page recomputes this row as ' + fmtUsd(recomputed) + (recomputed === row.implied_value_usd ? ', the same number board.json carries.' : ', which differs from the board: the sandbox is on, or the data would be stale.') + ' This is an estimate, not a price.' })
     ));
     dialog.appendChild(el('section', { class: 'detail-section' },
@@ -442,7 +495,11 @@
     shell.appendChild(lede());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
-    if (state.tab === 'pre-token') shell.appendChild(modelPanel());
+    if (state.tab === 'pre-token') {
+      var cats = categoryPanel();
+      if (cats) shell.appendChild(cats);
+      shell.appendChild(modelPanel());
+    }
     app.appendChild(shell);
     app.setAttribute('aria-busy', 'false');
     if (!dialog.isConnected) app.appendChild(dialog);

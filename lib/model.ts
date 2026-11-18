@@ -123,6 +123,8 @@ export interface BoardRow {
     age_days: number | null;
   };
   farm_steps: string[];
+  /** The row's derivation as a sentence, for the detail view. */
+  explanation: string;
 }
 
 /** The dashboard's compact view of one row, with farm plans generated in the page. */
@@ -144,6 +146,8 @@ export interface RadarRow {
   growth_multiplier: number;
   maturity_multiplier: number;
   chain_multiplier: number;
+  /** The row's derivation as a sentence, for the detail view. */
+  explanation: string;
 }
 
 /** A live-token protocol: it already trades, so the board shows the market's own value, not a model's. */
@@ -155,6 +159,8 @@ export interface LiveRow {
   tvl_usd: number;
   mcap_usd: number | null;
   change_7d: number | null;
+  /** The market-cap / TVL ratio this protocol itself trades at: the comparable its category is priced from. */
+  ratio: number | null;
 }
 
 /** Everything the dashboard needs: the board, the live set, and the model it runs. */
@@ -165,10 +171,16 @@ export interface RadarData {
   model: ModelConstants;
   model_version: string;
   watchlist_size: number;
+  /** The watchlist's slugs, so the page can filter to the watchlist alone. */
+  watchlist_slugs: string[];
   board_size: number;
   early_size: number;
   live_size: number;
   global_comparable: number;
+  /** The board grouped by category, richest first, for the dashboard's category table. */
+  categories: CategoryStat[];
+  /** How the comparables themselves spread, for the model panel. */
+  comparable_stats: ComparableStats;
   rows: RadarRow[];
   live: LiveRow[];
 }
@@ -259,6 +271,97 @@ export function comparableFor(p: SnapshotProtocol, comparables: Comparables): Co
   return { multiple: comparables.global, n: 0 };
 }
 
+/** A dollar figure as the explanation writes it: $2.75B, $543.6M, $214.2M. */
+function fmtUsd(n: number): string {
+  if (!Number.isFinite(n)) return 'n/a';
+  if (Math.abs(n) >= 1e9) return `$${(n / 1e9).toFixed(2)}B`;
+  if (Math.abs(n) >= 1e6) return `$${(n / 1e6).toFixed(1)}M`;
+  if (Math.abs(n) >= 1e3) return `$${Math.round(n / 1e3)}K`;
+  return `$${Math.round(n)}`;
+}
+
+/** An age in days as the explanation writes it: 1.5y, 45d, unknown. */
+function fmtAge(days: number | null): string {
+  if (days === null) return 'unknown';
+  if (days >= 365) return `${(days / 365).toFixed(1)}y`;
+  return `${Math.max(0, Math.round(days))}d`;
+}
+
+/** One row's derivation as a sentence: the arithmetic the detail view shows, in words. */
+export function explainRow(row: BoardRow): string {
+  const m = row.model;
+  const growth = m.growth_pct >= 0 ? `+${m.growth_pct}%` : `${m.growth_pct}%`;
+  const chains = `${row.chains.length} chain${row.chains.length === 1 ? '' : 's'}`;
+  return `${fmtUsd(row.tvl_usd)} of TVL x ${m.comparable_multiple} comparable x ${m.growth_multiplier} growth (${growth} over 7 days) x ${m.maturity_multiplier} maturity (${fmtAge(m.age_days)} with no token) x ${m.chain_multiplier} chain (${chains}) = ${fmtUsd(row.implied_value_usd)}.`;
+}
+
+/** One category's share of the board: how many rows, what multiple priced them, what they are worth together. */
+export interface CategoryStat {
+  category: string;
+  rows: number;
+  watchlist_rows: number;
+  comparable_multiple: number;
+  comparable_n: number;
+  total_implied_usd: number;
+  top_slug: string;
+  top_name: string;
+}
+
+/** The board grouped by category, richest first: the dashboard's category table. */
+export function categoryBreakdown(board: BoardRow[], watchlist: string[]): CategoryStat[] {
+  const byCat = new Map<string, BoardRow[]>();
+  for (const r of board) {
+    const key = r.category ?? 'Other';
+    const list = byCat.get(key);
+    if (list === undefined) byCat.set(key, [r]);
+    else list.push(r);
+  }
+  const watch = new Set(watchlist);
+  const stats = [...byCat.entries()].map(([category, rows]) => {
+    const sorted = [...rows].sort((a, b) => b.implied_value_usd - a.implied_value_usd);
+    const top = sorted[0]!;
+    return {
+      category,
+      rows: rows.length,
+      watchlist_rows: rows.filter((r) => watch.has(r.slug)).length,
+      comparable_multiple: top.model.comparable_multiple,
+      comparable_n: top.model.comparable_n,
+      total_implied_usd: rows.reduce((sum, r) => sum + r.implied_value_usd, 0),
+      top_slug: top.slug,
+      top_name: top.name,
+    };
+  });
+  stats.sort((a, b) => b.total_implied_usd - a.total_implied_usd || (a.category < b.category ? -1 : a.category > b.category ? 1 : 0));
+  return stats;
+}
+
+/** How the comparables themselves spread: how many categories price themselves, and the range of multiples. */
+export interface ComparableStats {
+  categories_priced: number;
+  categories_fallback: number;
+  min_multiple: number;
+  median_multiple: number;
+  max_multiple: number;
+}
+
+/** The comparables' own summary, from the categories the board actually holds. */
+export function comparableStats(board: BoardRow[], comparables: Comparables): ComparableStats {
+  const seen = new Map<string, number>();
+  for (const r of board) {
+    const key = r.category ?? 'Other';
+    if (!seen.has(key)) seen.set(key, r.model.comparable_multiple);
+  }
+  const multiples = [...seen.values()].sort((a, b) => a - b);
+  const priced = [...seen.keys()].filter((c) => comparables.byCategory.has(c)).length;
+  return {
+    categories_priced: priced,
+    categories_fallback: seen.size - priced,
+    min_multiple: multiples[0] ?? comparables.global,
+    median_multiple: multiples.length > 0 ? median(multiples) : comparables.global,
+    max_multiple: multiples[multiples.length - 1] ?? comparables.global,
+  };
+}
+
 /** The four multipliers and the implied value one protocol gets under `model`. */
 export function impliedValue(
   protocol: SnapshotProtocol,
@@ -330,7 +433,7 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
     return { p, implied, comparable, growthPct, growthMult, maturityMult, chainMult, age };
   });
   scored.sort((a, b) => b.implied - a.implied || (a.p.slug < b.p.slug ? -1 : a.p.slug > b.p.slug ? 1 : 0));
-  return scored.map((s, i) => ({
+  const rows: BoardRow[] = scored.map((s, i) => ({
     rank: i + 1,
     slug: s.p.slug,
     name: s.p.name,
@@ -355,7 +458,11 @@ export function buildBoard(snapshot: Snapshot, model: ModelConstants = MODEL): B
       age_days: s.age,
     },
     farm_steps: farmSteps(s.p, s.age).map(stepText),
+    explanation: '',
   }));
+  // The derivation sentence needs the finished row, so it is attached in a second pass.
+  for (const r of rows) r.explanation = explainRow(r);
+  return rows;
 }
 
 const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
@@ -496,6 +603,7 @@ export function liveRows(snapshot: Snapshot): LiveRow[] {
       tvl_usd: p.tvl_usd,
       mcap_usd: p.mcap_usd,
       change_7d: p.change_7d,
+      ratio: p.mcap_usd !== null && p.tvl_usd > 0 ? Math.round((p.mcap_usd / p.tvl_usd) * 1e4) / 1e4 : null,
     }));
 }
 
@@ -519,6 +627,7 @@ export function radarRow(row: BoardRow): RadarRow {
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
     chain_multiplier: row.model.chain_multiplier,
+    explanation: row.explanation,
   };
 }
 
@@ -535,10 +644,13 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     model,
     model_version: MODEL_VERSION,
     watchlist_size: snapshot.watchlist.length,
+    watchlist_slugs: snapshot.watchlist,
     board_size: board.length,
     early_size: early,
     live_size: live.length,
     global_comparable: round4(comparables.global),
+    categories: categoryBreakdown(board, snapshot.watchlist),
+    comparable_stats: comparableStats(board, comparables),
     rows: board.map(radarRow),
     live,
   };

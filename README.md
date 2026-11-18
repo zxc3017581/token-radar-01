@@ -42,9 +42,26 @@ vendored make.fun library (`vendor/makefun-board.ts`, do not modify).
 ## The dashboard
 
 `dashboard/` is a static page with no network: it reads `data.js` beside it and renders the
-ranked board, a live-token view, search, category and chain filters, a per-protocol detail
-drawer (model breakdown plus farm plan), and a model sandbox that re-scores the board under
-different assumptions without touching `board.json`.
+ranked board, a live-token view, search, category and chain filters, a watchlist-only toggle,
+a per-protocol detail drawer (model breakdown plus farm plan), and a model sandbox that
+re-scores the board under different assumptions without touching `board.json`.
+
+Below the board, an "Implied value by category" table groups the board by category — how many
+protocols, how many on the watchlist, the comparable multiple that priced them, their total
+implied value, and the strongest protocol. Selecting a category filters the board to it. The
+live-token view shows each live protocol's own market-cap / TVL ratio, the numbers the
+comparables are medians of. Every detail drawer carries the row's derivation as one sentence,
+so the arithmetic is readable without opening the code.
+
+## How to read the board
+
+Start at rank 1: the strongest implied value, not the biggest TVL. A protocol ranks high when
+its category trades richly (a high comparable), its TVL is large, it has grown in the last
+seven days, it has run a long time with no token, and it runs on many chains. The Comparable
+column shows the multiple each row was priced at; a row on the global median (0.241 in this
+snapshot) belongs to a category too thin to price itself. The sandbox lets you test the
+ranking's sensitivity: scale the comparable, change the growth weight, switch the chain factor
+off, and watch the board re-rank.
 
 ## Farm plans
 

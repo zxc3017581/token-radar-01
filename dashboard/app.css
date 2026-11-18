@@ -102,6 +102,10 @@ tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--accent) 12
 .status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 
 .model { margin-top: var(--step-4); padding: var(--step-5); display: grid; gap: var(--step-3); }
+.cats { margin-top: var(--step-4); padding: var(--step-5); display: grid; gap: var(--step-3); }
+.cats-head { display: grid; gap: var(--step-1); }
+.cats tbody tr { cursor: pointer; }
+.explain { font-family: var(--font-num); font-size: 13px; line-height: 1.7; color: var(--ink); background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-control); padding: var(--step-3) var(--step-4); overflow-wrap: anywhere; }
 .formula { font-family: var(--font-num); font-size: 13px; line-height: 1.7; color: var(--muted); overflow-wrap: anywhere; background: var(--canvas); border: 1px solid var(--border); border-radius: var(--radius-control); padding: var(--step-3) var(--step-4); }
 .empty { padding: var(--step-7) var(--step-5); text-align: center; display: grid; gap: var(--step-3); justify-items: center; }
 .empty p { color: var(--muted); }
