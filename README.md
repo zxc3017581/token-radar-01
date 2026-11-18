@@ -63,6 +63,43 @@ snapshot) belongs to a category too thin to price itself. The sandbox lets you t
 ranking's sensitivity: scale the comparable, change the growth weight, switch the chain factor
 off, and watch the board re-rank.
 
+## Limitations
+
+The model is honest about what it cannot see:
+
+- One snapshot, one date. The board prices the 2026-11-14 universe; a protocol that
+  launched, grew or collapsed after that date is not in it, and the seven-day growth is a
+  single noisy window, not a trend.
+- Comparables are medians, not causes. A category's median market-cap / TVL ratio says what
+  its live tokens trade at; it does not say a pre-token protocol in that category will trade
+  there. Categories with fewer than three live protocols fall back to the global median, and
+  the clamp at [0.05, 1.5] binds for the richest and poorest categories alike.
+- No on-chain activity. The model uses TVL, growth, age and chain count from the index; it
+  does not read wallets, transactions, points programs or social attention, so a protocol
+  with real usage and no TVL scores low, and a protocol with mercenary TVL scores high.
+- Gas figures are estimates. The farm plans price gas by chain from the chain name alone
+  ($8 on Ethereum, $0.50 on the L2s, $0.10 on Solana); real gas moves with congestion, and
+  the capital figures ($50–$250) are sized to the protocol's TVL, not to any airdrop's
+  published thresholds, because the snapshot carries none.
+- Implied value is a model, not a price. It ranks protocols against each other; it does not
+  predict a listing price, a market cap, or whether a token launches at all.
+
+## Reproduce
+
+```sh
+# Score the snapshot and write the output directory
+MAKEFUN_OUTPUT_DIR=out node main.ts --input ../input/snapshot.json
+
+# Re-take the three screenshots (Playwright, headless Chromium, 1440x900)
+# board: dashboard/index.html
+# detail: dashboard/index.html#p=steakhouse-financial
+# filtered: dashboard/index.html#category=Dexs
+```
+
+The board is deterministic: the same snapshot and the same code always produce the same
+226 rows in the same order. The screenshots are the only part that depends on a browser;
+they show the board, a detail drawer and a filtered view of the dashboard the code builds.
+
 ## Farm plans
 
 Each row carries six steps derived from the protocol's own record — category, chains, TVL,
